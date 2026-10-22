@@ -10,6 +10,7 @@ import {
   parseMigrationName,
   resolveMigrationDir,
   runFlywayIfEnabled,
+  splitMigrationStatements,
   type FlywayDb,
 } from './flyway.js';
 import { notDeleted } from './db.js';
@@ -62,6 +63,20 @@ describe('Flyway checksum and filenames', () => {
     expect(compareVersions('9', '10')).toBeLessThan(0);
     expect(compareVersions('001', '012')).toBeLessThan(0);
     expect(compareVersions('075', '075')).toBe(0);
+  });
+
+  it('splits client DELIMITER blocks without splitting procedure bodies', () => {
+    const sql = `-- setup; comment\nCREATE TABLE t (id INT);\nDELIMITER //\nCREATE PROCEDURE p()\nBEGIN\n  SELECT ';';\n  SELECT 2;\nEND //\nDELIMITER ;\nCALL p();\n`;
+    expect(splitMigrationStatements(sql)).toEqual([
+      '-- setup; comment\nCREATE TABLE t (id INT)',
+      "CREATE PROCEDURE p()\nBEGIN\n  SELECT ';';\n  SELECT 2;\nEND",
+      'CALL p()',
+    ]);
+  });
+
+  it('does not split delimiters inside strings and SQL comments', () => {
+    expect(splitMigrationStatements("SELECT 'a;b'; -- ; ignored\nSELECT 2; /* ; ignored */ SELECT 3;"))
+      .toEqual(["SELECT 'a;b'", '-- ; ignored\nSELECT 2', '/* ; ignored */ SELECT 3']);
   });
 
   it('lists shared SQL migrations in version order', () => {

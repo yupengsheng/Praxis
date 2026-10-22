@@ -122,6 +122,82 @@ export function listMigrations(dir: string): FlywayMigration[] {
   return migrations;
 }
 
+/** Split mysql-client migration scripts, including client-side DELIMITER directives. */
+export function splitMigrationStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let delimiter = ';';
+  let statement = '';
+  let quote: "'" | '"' | '`' | null = null;
+  let lineComment = false;
+  let blockComment = false;
+
+  const lines = sql.split(/(?<=\n)/);
+  for (const line of lines) {
+    const directive = /^\s*DELIMITER\s+(\S+)\s*$/i.exec(line.trimEnd());
+    if (directive && statement.trim() === '') {
+      delimiter = directive[1];
+      continue;
+    }
+
+    for (let i = 0; i < line.length; i += 1) {
+      const char = line[i];
+      const next = line[i + 1];
+
+      if (lineComment) {
+        statement += char;
+        if (char === '\n') lineComment = false;
+        continue;
+      }
+      if (blockComment) {
+        statement += char;
+        if (char === '*' && next === '/') {
+          statement += next;
+          i += 1;
+          blockComment = false;
+        }
+        continue;
+      }
+      if (quote) {
+        statement += char;
+        if (char === '\\' && quote !== '`' && next !== undefined) {
+          statement += next;
+          i += 1;
+        } else if (char === quote) {
+          if (next === quote) {
+            statement += next;
+            i += 1;
+          } else {
+            quote = null;
+          }
+        }
+        continue;
+      }
+
+      if (char === '/' && next === '*') {
+        statement += '/*';
+        i += 1;
+        blockComment = true;
+      } else if (char === '#' || (char === '-' && next === '-' && (line[i + 2] === ' ' || line[i + 2] === '\t' || line[i + 2] === '\n'))) {
+        statement += char;
+        if (char === '-') statement += line[++i];
+        lineComment = true;
+      } else if (char === "'" || char === '"' || char === '`') {
+        quote = char;
+        statement += char;
+      } else if (line.startsWith(delimiter, i)) {
+        if (statement.trim()) statements.push(statement.trim());
+        statement = '';
+        i += delimiter.length - 1;
+      } else {
+        statement += char;
+      }
+    }
+  }
+
+  if (statement.trim()) statements.push(statement.trim());
+  return statements;
+}
+
 async function createHistoryTable(db: FlywayDb): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS \`${HISTORY_TABLE}\` (
@@ -264,7 +340,9 @@ export async function migrateWithDb(
       }
       const started = Date.now();
       try {
-        await db.query(migration.sql);
+        for (const statement of splitMigrationStatements(migration.sql)) {
+          await db.query(statement);
+        }
         await insertHistory(db, {
           installedRank: nextRank,
           version: migration.version,

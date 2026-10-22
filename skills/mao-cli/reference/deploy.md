@@ -325,7 +325,7 @@ cd backend-ts && npm ci && npm run build && ./restart.sh
 
 只更新管理后台时，部署前已经打开的页面不必先手动刷新：点到尚未打开过的菜单时，若旧脚本已经不在服务器上，会自动整页打开该菜单并加载新版本（0.0.180 起）。已经打开过的菜单照常切换。若自动跳转后仍不对，再强制刷新一次。
 
-Flyway 在启动时自动迁移；升级期间勿多实例并发启动后端。
+Flyway 在启动时自动迁移；升级期间勿多实例并发启动后端。迁移器支持 MySQL 客户端脚本中的 `DELIMITER` 存储过程块，并正确忽略字符串和注释内部的分号。若启动报迁移错误，先检查 `backend-ts/logs/backend-ts-<port>.log` 中的 `Flyway migrate failed`；不要直接删除数据库或伪造 `flyway_schema_history`。失败迁移前的 DDL 可能已部分执行，应先确认数据与表状态，再修复后重试。
 
 管理端也可 `GET /v1/admin/runtime/restart` 触发 `${MAO_ROOT_DIR}/backend-ts/restart.sh`。
 
